@@ -1,0 +1,26 @@
+[project]
+name = "resume-evaluator"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Srinivasa Reddy", email = "sanikommusrinivasareddy2@gmail.com" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "groq>=1.7.0",
+    "pdfreader>=0.1.15",
+    "python-dotenv>=1.2.4",
+]
+
+[project.scripts]
+resume-evaluator = "resume_evaluator:main"
+
+[build-system]
+requires = ["uv_build>=0.13.6,<0.14.0"]
+build-backend = "uv_build"
+
+[tool.uv.workspace]
+members = [
+    "pdfreader",
+]
