@@ -3,6 +3,11 @@ import os
 from dotenv import load_dotenv
 from groq import Groq
 from pydantic import BaseModel
+from docx import Document
+from PyPDF2 import PdfReader
+import json
+from typing import Optional
+
 
 load_dotenv()
 api_key = os.getenv("GROQ_API_KEY")
@@ -11,6 +16,7 @@ if not api_key :
     raise ValueError("Api key is not configured in the env file")
 
 client = Groq(api_key=api_key)
+model = "openai/gpt-oss-120b"
 
 # Step 1 defining the JD parsing schema
 
@@ -82,17 +88,19 @@ user_message =  {
 response_format = {
     "type" : "json_object"
 }
-
 response = client.chat.completions.create(
-    model = "qwen/qwen3.8-27b",
+    model = model,
     messages = [system_message, user_message],
-    response_format = response_format,
-    max_tokens = 512
+    response_format = response_format
 )
 
 answer = response.choices[0].message.content
+print("Extracted Job Description Data:\n\n")
 print(answer)
-
+print("\n\n")
+raw_json = answer
+JD_data_file = json.loads(raw_json)
+JD_data = JD(**JD_data_file)
 
 
 # Step 2 defining the resume parsing schema
@@ -100,41 +108,145 @@ print(answer)
 class Experience(BaseModel):
     company_name : str
     role : str
-    duration : str
-    description : str
+    duration : Optional[str] = None
+    description : Optional[str] = None
     skills_used : list
 
 class Education(BaseModel):
     Title : str
-    institution : str
-    duration : str
-    description : str
-    grades : str
+    institution : Optional[str] = None
+    duration : Optional[str] = None
+    description : Optional[str] = None
+    grades : Optional[str] = None
 
 class Project(BaseModel):
     Title : str
     description : str
-    skills_used : list
-    link : str
+    skills_used : Optional[list] = []
+    link : Optional[str] = None
 
 class Links(BaseModel):
-    platform : str
-    link : str
+    platform : Optional[str] = None
+    link : Optional[str] = None
 
 class Resume(BaseModel):
     name : str
-    email : str
-    phone_number : str
-    social_links : list[Links]
-    skills : list
-    total_years_of_experience : float
-    experiences : list[Experience]
-    educations : list[Education]
-    projects : list[Project]
-    certifications : list
-    additional_information : str
+    email : Optional[str] = None
+    phone_number : Optional[str] = None
+    social_links : Optional[list[Links]] = []
+    skills : Optional[list] = []
+    total_years_of_experience : Optional[float] = 0.0
+    experiences : Optional[list[Experience]] = []
+    educations : Optional[list[Education]] = []
+    projects : Optional[list[Project]] = []
+    certifications : Optional[list] = []
+    additional_information : Optional[str] = None
 
 resume_schema = Resume.model_json_schema()
 
 # Reading resumes
+# This function reads the content of a resume file (PDF or DOCX) and returns the extracted text. It uses the PyPDF2 library for PDF files and the python-docx library for DOCX files. If the file format is unsupported, it raises a ValueError.
 
+def read_resume(file_path):
+
+    file_extension = Path(file_path).suffix.lower()
+
+    if file_extension == ".pdf":
+
+        reader = PdfReader(file_path)
+        text = ""
+        for page in reader.pages:
+            text += page.extract_text()
+        return text
+
+    
+    elif file_extension == ".docx":
+
+        doc = Document(file_path)
+        text = ""
+        for para in doc.paragraphs:
+            text += para.text + "\n"
+        return text
+
+    
+    else:
+        raise ValueError("Unsupported file format. Please provide a PDF or DOCX file.")
+
+resumes_texts = []
+
+for file in os.listdir("resumes"):
+
+    if file.endswith(".pdf") or file.endswith(".docx"):
+
+        resume_text = read_resume(os.path.join("resumes", file))
+        resumes_texts.append(resume_text)
+
+    else:
+
+        print(f"Skipping unsupported file format: {file}")
+
+class final_evaluation(BaseModel):
+    applicant_name : str
+    suitability_score : float
+    strenghts : list
+    weaknesses : list
+    final_verdict : str
+
+final_evaluation_schema = final_evaluation.model_json_schema()
+for resume_text in resumes_texts:
+    
+    system_prompt = f"""You are a expert HR assistant ,your task is to extract the information from the resume and return it in a strictly structured JSON format according to the following schema:{resume_schema} and give me a json output"""
+
+    system_message = {"role" : "system", "content" : system_prompt}
+
+    user_prompt = f"""extract the information from the resume {resume_text}."""
+
+    user_message =  {
+        "role" : "user",
+        "content" : user_prompt
+    }
+
+    response_format = {
+        "type" : "json_object"
+    }
+    response = client.chat.completions.create(
+        model = model,
+        messages = [system_message, user_message],
+        response_format = response_format
+    )
+
+    answer = response.choices[0].message.content
+
+    raw_json = answer
+    resume_data_file = json.loads(raw_json)
+    resume_data = Resume(**resume_data_file)
+
+    # Now for each resume, we can compare the extracted information with the job description to evaluate the suitability of the candidate for the role. This can be done by checking if the required skills, preferred skills, and other qualifications match between the resume and the job description.
+
+    system_prompt = f"""You are a expert HR assistant ,your task is to evaluate the suitability of the candidate for the role based on the extracted information from the resume and the job description. Return the evaluation in a strictly structured JSON format according to the following schema:{final_evaluation_schema} and give me a json output"""
+
+    system_message = {"role" : "system", "content" : system_prompt}
+
+    user_prompt = f"""Evaluate the suitability of the candidate for the role based on the extracted information from the resume {resume_data} and the job description {JD_data.model_dump_json()}."""
+
+    user_message =  {
+        "role" : "user",
+        "content" : user_prompt
+    }
+
+    response_format = {
+        "type" : "json_object"
+    }
+    response = client.chat.completions.create(
+        model = model,
+        messages = [system_message, user_message],
+        response_format = response_format
+    )
+
+    answer = response.choices[0].message.content
+    print(f"Evaluation for the resume {resume_data.name}:\n\n")
+    print(answer)
+    print("\n\n")
+    
+
+    
